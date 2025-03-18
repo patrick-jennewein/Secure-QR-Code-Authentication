@@ -2,7 +2,7 @@ import cv2
 from webcam import set_webcam_index
 
 def main(webcam_index):
-    # open connection to webcam and ensure opened succesfully
+    # open connection to webcam and ensure opened successfully
     webcam = cv2.VideoCapture(webcam_index)
     if not webcam.isOpened():
         print("Error: Could not open webcam.")
