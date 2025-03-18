@@ -5,6 +5,7 @@ import qrcode
 import io
 import os
 from pyzbar.pyzbar import decode
+import datetime
 
 
 def set_webcam_index(index):
@@ -133,12 +134,21 @@ def main(webcam_index):
 
                 if student:
                     name, class_name = student
-                    print(f"Student ID: {student_id}, Name: {name}, Class: {class_name}")
+
+                    # Get current timestamp
+                    scan_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    # Update last_scan_time in the database
+                    cursor.execute("UPDATE qr_data SET last_scan_time = ? WHERE student_id = ?",
+                                   (scan_time, student_id))
+                    conn.commit()  # Ensure the update is saved
+
+                    print(f"Student ID: {student_id}, Name: {name}, Class: {class_name}, Last Scan: {scan_time}")
 
                     # Display detected student info on the frame
-                    cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}",
+                    cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
                                 (qr_code.rect.left, qr_code.rect.top - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
                 else:
                     print("Student not found in database.")
