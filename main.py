@@ -1,4 +1,5 @@
 import cv2
+import csv
 import sqlite3
 
 
@@ -9,6 +10,24 @@ def set_webcam_index(index):
         return DEFAULT_WEB_CAM
     elif index == 1:
         return EXTERNAL_WEB_CAM
+
+
+def create_columns_from_csv(cursor, csv_filename):
+    with open(csv_filename, "r", newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+
+        for row in reader:
+            student_id = row["student_id"].strip()
+            name = row["name"].strip()
+            class_name = row["class"].strip()
+
+            # insert new student from .csv file
+            cursor.execute(
+                "INSERT INTO qr_data (student_id, name, class) VALUES (?, ?, ?)",
+                (student_id, name, class_name),
+            )
+    print("Initial database population complete!")
+
 
 
 def initialize_database(conn, cursor):
@@ -27,6 +46,7 @@ def initialize_database(conn, cursor):
                 last_scan_time TEXT DEFAULT NULL
             )
         ''')
+        create_columns_from_csv(cursor, "fake_data.csv")
         print("Table created!")
 
     conn.commit()
