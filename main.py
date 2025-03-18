@@ -1,5 +1,7 @@
 import cv2
 from webcam import set_webcam_index
+from database import initialize_database
+import sqlite3
 
 def main(webcam_index):
     # open connection to webcam and ensure opened successfully
@@ -7,6 +9,11 @@ def main(webcam_index):
     if not webcam.isOpened():
         print("Error: Could not open webcam.")
         exit()
+
+    # initialize database
+    initialize_database()
+    print("Database initialized!")
+
 
     # capture webcam by frame
     while True:
