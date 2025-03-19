@@ -11,6 +11,30 @@ import warnings
 import sys
 
 
+def suppress_stderr():
+    """Temporarily redirect `stderr` to `os.devnull` to suppress warnings from ZBar."""
+    sys.stderr.flush()  # Ensure everything is written before redirecting
+    devnull = os.open(os.devnull, os.O_WRONLY)  # Open null device for writing
+    old_stderr = os.dup(2)  # Duplicate stderr file descriptor
+    os.dup2(devnull, 2)  # Redirect stderr to null
+    os.close(devnull)  # Close temporary null file descriptor
+    return old_stderr  # Return the old stderr to restore later
+
+def restore_stderr(old_stderr):
+    """Restore original `stderr` after suppressing."""
+    sys.stderr.flush()
+    os.dup2(old_stderr, 2)  # Restore original stderr
+    os.close(old_stderr)  # Close the old descriptor
+
+def safe_decode(frame):
+    """Run `decode()` while completely suppressing stderr warnings from ZBar."""
+    old_stderr = suppress_stderr()  # Suppress stderr before calling decode
+    try:
+        qr_codes = decode(frame)  # Decode normally
+    finally:
+        restore_stderr(old_stderr)  # Restore stderr after decoding
+    return qr_codes
+
 def set_webcam_index(index):
     """Sets the index of the webcam that will be used for this application"""
     DEFAULT_WEB_CAM = 0
@@ -171,7 +195,7 @@ def main(webcam_index, folder_path, database_name):
             break
 
         # detect and decodes QR codes from each frame
-        qr_codes = decode(frame)
+        qr_codes = safe_decode(frame)
         for qr_code in qr_codes:
             qr_data = qr_code.data.decode("utf-8")
 
@@ -223,7 +247,8 @@ def main(webcam_index, folder_path, database_name):
 
                     # reject outdated QR codes
                     if scanned_time_obj < valid_after_obj:
-                        print(Fore.RED + f"{'Outdated':<10}{student_id:<8}{name:<30}{class_name:<10}{'':<40}" + Fore.RESET)
+                        outdated_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print(Fore.RED + f"{'Outdated':<10}{student_id:<8}{name:<30}{class_name:<10}{outdated_time:<40}" + Fore.RESET)
                         continue
 
                     # get formatted timestamp for valid scan and update database
