@@ -6,6 +6,7 @@ import io
 import os
 from pyzbar.pyzbar import decode
 import datetime
+import time
 
 
 def set_webcam_index(index):
@@ -19,23 +20,29 @@ def set_webcam_index(index):
 
 
 def generate_qr_code(student_id, name, class_name):
-    """generates a unique QR code for a student and returns it as binary data."""
-    qr_data = f"ID:{student_id}|Name:{name}|Class:{class_name}"
+    """Generates a unique QR code for a student and returns it as binary data."""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Make it part of QR data
+    qr_data = f"ID:{student_id}|Name:{name}|Class:{class_name}|TS:{timestamp}"
+
     qr = qrcode.make(qr_data)
 
-    # ensure the `qr_codes` folder exists and make it if it doesn't
+    # Ensure the folder exists
     folder_path = "qr_codes"
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
 
-    # save the QR code as a .png image file named after the student ID
+    # Overwrite the old QR code file (no timestamp in filename)
     qr_filename = os.path.join(folder_path, f"{student_id}.png")
     qr.save(qr_filename, format="PNG")
 
-    # convert QR code to binary data and return
-    qr_bytes = io.BytesIO()
-    qr.save(qr_bytes, format="PNG")
-    return qr_bytes.getvalue()
+    # Convert QR code to binary and return
+    with open(qr_filename, "rb") as f:
+        qr_binary = f.read()
+
+    print(f"✅ Generated new QR for {student_id} at {timestamp}")
+    return qr_binary
+
+
 
 def generate_and_store_initial_qr_codes(cursor):
     """generates and stores QR codes for all students when initially creating the SQL table."""
@@ -50,22 +57,30 @@ def generate_and_store_initial_qr_codes(cursor):
 
 
 def update_qr_code(conn, cursor, student_id):
-    """updates a student's QR code when scanned, creating a new one."""
-    # queries the database for the student, using student's ID
+    """Updates a student's QR code when scanned."""
     cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
     student = cursor.fetchone()
 
-    # ensure student exists in database
     if student:
         name, class_name = student
 
-        # create QR code and update database
+        # Generate a new QR code
         qr_code_binary = generate_qr_code(student_id, name, class_name)
-        cursor.execute("UPDATE qr_data SET qr_code = ? WHERE student_id = ?", (qr_code_binary, student_id))
-        print(f"QR code updated for student {student_id}")
-        conn.commit()
+
+        # Debugging: Check if the QR code is actually different
+        cursor.execute("SELECT qr_code FROM qr_data WHERE student_id = ?", (student_id,))
+        old_qr_code = cursor.fetchone()[0]
+
+        if qr_code_binary == old_qr_code:
+            print(f"⚠️ Warning: QR code for {student_id} is identical to the previous one!")
+        else:
+            cursor.execute("UPDATE qr_data SET qr_code = ? WHERE student_id = ?", (qr_code_binary, student_id))
+            conn.commit()
+            print(f"✅ QR code updated for student {student_id}")
     else:
         print(f"Student ID {student_id} not found.")
+
+
 
 
 def create_columns_from_csv(cursor, csv_filename):
@@ -110,7 +125,7 @@ def initialize_database(conn, cursor):
 
 
 def main(webcam_index):
-    # open connection to webcam and ensure opened successfully
+    # open connection to webcam and ensure it opened successfully
     webcam = cv2.VideoCapture(webcam_index)
     if not webcam.isOpened():
         print("Error: Could not open webcam.")
@@ -121,6 +136,9 @@ def main(webcam_index):
     cursor = conn.cursor()
     initialize_database(conn, cursor)
 
+    # Dictionary to track recent scans and prevent duplicate processing
+    recent_scans = {}
+
     # capture webcam by frame
     while True:
         read, frame = webcam.read()
@@ -128,13 +146,29 @@ def main(webcam_index):
             print("Error: Could not read frame.")
             break
 
-        # detects and decode QR codes from each individual frame and returns a list
+        # detects and decodes QR codes from each individual frame and returns a list
         qr_codes = decode(frame)
         for qr_code in qr_codes:
             qr_data = qr_code.data.decode("utf-8")
 
             if qr_data.startswith("ID:"):
                 student_id = qr_data.split("|")[0].split(":")[1]
+
+                # Get current timestamp
+                current_time = time.time()
+
+                # Cooldown period in seconds
+                cooldown_period = 3  # Adjust as needed
+
+                # Check if this student ID was scanned recently
+                if student_id in recent_scans:
+                    time_since_last_scan = current_time - recent_scans[student_id]
+                    if time_since_last_scan < cooldown_period:
+                        print(f"⏳ Skipping duplicate scan for {student_id} (cooldown active: {time_since_last_scan:.2f} sec ago)")
+                        continue  # Skip processing this scan
+
+                # Update recent scan timestamp
+                recent_scans[student_id] = current_time
 
                 # Query the database for student info
                 cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
@@ -143,25 +177,29 @@ def main(webcam_index):
                 if student:
                     name, class_name = student
 
-                    # Get current timestamp and update database
+                    # Get formatted timestamp
                     scan_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cursor.execute("UPDATE qr_data SET last_scan_time = ? WHERE student_id = ?",
-                                   (scan_time, student_id))
+
+                    # Update last_scan_time in the database
+                    cursor.execute("UPDATE qr_data SET last_scan_time = ? WHERE student_id = ?", (scan_time, student_id))
                     conn.commit()
 
-                    print(f"Student ID: {student_id}, Name: {name}, Class: {class_name}, Last Scan: {scan_time}")
+                    print(f"📸 Scanned Student ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}")
 
                     # Display detected student info on the frame
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
                                 (qr_code.rect.left, qr_code.rect.top - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                    # update QR code and break look
+                    # Update QR code (only if cooldown allows it)
                     update_qr_code(conn, cursor, student_id)
 
+                    # ⚡ Force a short delay to ensure the new QR code is registered
+                    print(f"⏳ Waiting {cooldown_period} seconds to ensure the new QR code is in effect...")
+                    time.sleep(cooldown_period)
 
                 else:
-                    print("Student not found in database.")
+                    print("❌ Student not found in database.")
 
         # Show webcam feed with potential QR code overlays
         cv2.imshow("Webcam Feed", frame)
@@ -169,10 +207,11 @@ def main(webcam_index):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # end feed
+    # End feed
     webcam.release()
     cv2.destroyAllWindows()
     conn.close()
+
 
 
 if __name__ == '__main__':
