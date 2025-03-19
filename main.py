@@ -7,6 +7,8 @@ from pyzbar.pyzbar import decode
 import datetime
 import time
 from colorama import init, Fore
+import warnings
+import sys
 
 
 def set_webcam_index(index):
@@ -44,9 +46,6 @@ def generate_qr_code(student_id, name, class_name, folder_path, initial):
     with open(qr_filename, "rb") as f:
         qr_binary = f.read()
 
-    if not initial:
-        print(Fore.GREEN + f"Generated new QR for {student_id} at {timestamp}" + Fore.RESET)
-
     return qr_binary, timestamp
 
 
@@ -67,7 +66,8 @@ def update_qr_code(conn, cursor, student_id):
         cursor.execute("UPDATE qr_data SET qr_code = ?, qr_valid_after = ? WHERE student_id = ?",
                        (qr_code_binary, new_timestamp, student_id))
         conn.commit()
-        print(Fore.GREEN + f"QR code updated for student {student_id}. Old QR codes are now invalid." + Fore.RESET)
+        print(f"{'Updated':<10}{student_id:<8}{name:<30}{class_name:<10}{new_timestamp:<40}")
+
     else:
         print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
 
@@ -135,26 +135,26 @@ def initialize_database(conn, cursor):
     conn.commit()
 
 
-def main(webcam_index):
-    # Open connection to webcam and ensure it opened successfully
+def main(webcam_index, folder_path, database_name):
+    print(f"{'Status':<10}{'ID':<8}{'Name':<30}{'Class':<10}{'Timestamp':<40}")
+    # open connection to webcam
     webcam = cv2.VideoCapture(webcam_index)
     if not webcam.isOpened():
-        print("❌ Error: Could not open webcam.")
+        print(Fore.RED + f"Error: Could not open webcam" + Fore.RESET)
         exit()
 
-    # Initialize database
-    conn = sqlite3.connect("students.db")
+    # initialize database
+    conn = sqlite3.connect(database_name)
     cursor = conn.cursor()
     initialize_database(conn, cursor)
 
-    # Ensure the `qr_codes` folder exists before generating any QR codes
-    folder_path = "qr_codes"
+    # Ensure the folder exists before generating any QR codes
     if not os.path.exists(folder_path):
         try:
             os.makedirs(folder_path)
-            print(f"📂 Created folder: {folder_path}")
+            print(Fore.GREEN + f"Created folder {folder_path}" + Fore.RESET)
         except OSError as e:
-            print(f"❌ Error creating folder {folder_path}: {e}")
+            print(Fore.RED + f"Error creating folder {folder_path}: {e}" + Fore.RESET)
             exit()
 
     # Generate initial QR codes if needed
@@ -163,14 +163,14 @@ def main(webcam_index):
     # Dictionary to track recent scans and prevent duplicate processing
     recent_scans = {}
 
-    # Capture webcam frames
+    # capture webcam frames
     while True:
         read, frame = webcam.read()
         if not read:
-            print("❌ Error: Could not read frame.")
+            print(Fore.RED + "Error: Could not read frame." + Fore.RESET)
             break
 
-        # Detects and decodes QR codes from each frame
+        # detect and decodes QR codes from each frame
         qr_codes = decode(frame)
         for qr_code in qr_codes:
             qr_data = qr_code.data.decode("utf-8")
@@ -178,32 +178,32 @@ def main(webcam_index):
             if qr_data.startswith("ID:"):
                 qr_data_dict = {}
 
-                # Safely parse QR code data into a dictionary
+                # QR code data into a dictionary
                 for part in qr_data.split("|"):
-                    key_value = part.split(":", 1)  # Split only at the first `:`
+                    key_value = part.split(":", 1)
                     if len(key_value) == 2:
                         key, value = key_value
                         qr_data_dict[key.strip()] = value.strip()
 
-                # Ensure required fields exist
+                # ensure required fields exist
                 if "ID" not in qr_data_dict or "TS" not in qr_data_dict:
-                    print("❌ Invalid QR code format. Skipping...")
+                    print(Fore.RED + f"Invalid QR code format. Skipping..." + Fore.RESET)
                     continue
 
                 student_id = qr_data_dict["ID"]
                 scanned_timestamp = qr_data_dict["TS"]
 
-                # Get current time
+                # get current time
                 current_time = time.time()
-                cooldown_period = 1.5  # Cooldown time in seconds
+                cooldown_period = 1.5
 
-                # Check if this student ID was scanned recently
+                # check if this student ID was scanned recently
                 if student_id in recent_scans:
                     time_since_last_scan = current_time - recent_scans[student_id]
                     if time_since_last_scan < cooldown_period:
                         continue
 
-                # Update recent scan timestamp
+                # update recent scan timestamp if have waited until after cooldown period
                 recent_scans[student_id] = current_time
 
                 # Retrieve student details from the database
@@ -213,43 +213,41 @@ def main(webcam_index):
                 if student:
                     name, class_name, valid_after = student
 
-                    # Handle case where `qr_valid_after` is NULL (i.e., first-time QR code generation)
+                    # handle edge case where `qr_valid_after` is NULL
                     if valid_after is None:
-                        valid_after = "1970-01-01 00:00:00"  # Default to a very old date
+                        valid_after = "1970-01-01 00:00:00"
 
-                    # Convert timestamps to datetime objects before comparison
+                    # convert timestamps for comparison
                     scanned_time_obj = datetime.datetime.strptime(scanned_timestamp, "%Y-%m-%d %H:%M:%S")
                     valid_after_obj = datetime.datetime.strptime(valid_after, "%Y-%m-%d %H:%M:%S")
 
-                    # Reject outdated QR codes
+                    # reject outdated QR codes
                     if scanned_time_obj < valid_after_obj:
-                        print(f"❌ QR code for {student_id} is outdated. Access denied.")
+                        print(Fore.RED + f"{'Outdated':<10}{student_id:<8}{name:<30}{class_name:<10}{'':<40}" + Fore.RESET)
                         continue
 
-                    # Get formatted timestamp for this scan
+                    # get formatted timestamp for valid scan and update database
                     scan_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                    # Update last_scan_time in the database
                     cursor.execute("UPDATE qr_data SET last_scan_time = ? WHERE student_id = ?",
                                    (scan_time, student_id))
                     conn.commit()
 
-                    print(f"📸 Scanned Student ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}")
+                    print(Fore.GREEN + f"{'Success':<10}{student_id:<8}{name:<30}{class_name:<10}{scan_time:<40}" + Fore.RESET)
 
-                    # Display detected student info on the frame
+                    # display detected student info on the frame
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
                                 (qr_code.rect.left, qr_code.rect.top - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                    # Update QR code (only if cooldown allows it)
+                    # update QR code
                     update_qr_code(conn, cursor, student_id)
 
                     # Wait a short time to ensure the new QR code is in effect
-                    print(f"⏳ Waiting {cooldown_period} seconds to ensure the new QR code is in effect...")
+                    # print(f"Waiting {cooldown_period} seconds to ensure the new QR code is in effect...")
                     time.sleep(cooldown_period)
 
                 else:
-                    print("❌ Student not found in database.")
+                    print(Fore.RED + "Student not found in database." + Fore.RESET)
 
         # Show webcam feed with potential QR code overlays
         cv2.imshow("Webcam Feed", frame)
@@ -265,4 +263,6 @@ def main(webcam_index):
 
 if __name__ == '__main__':
     webcam_index = set_webcam_index(1)
-    main(webcam_index)
+    qr_code_folder = "qr_codes"
+    database_name = "students.db"
+    main(webcam_index, qr_code_folder, database_name)
