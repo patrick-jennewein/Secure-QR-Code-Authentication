@@ -9,6 +9,7 @@ import datetime
 
 
 def set_webcam_index(index):
+    """sets the index of the webcam that will be used for this application"""
     DEFAULT_WEB_CAM = 0
     EXTERNAL_WEB_CAM = 1
     if index == 0:
@@ -22,40 +23,47 @@ def generate_qr_code(student_id, name, class_name):
     qr_data = f"ID:{student_id}|Name:{name}|Class:{class_name}"
     qr = qrcode.make(qr_data)
 
-    # Ensure the qr_codes folder exists
+    # ensure the `qr_codes` folder exists and make it if it doesn't
     folder_path = "qr_codes"
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
 
-    # Save the QR code as an image file named after the student ID
+    # save the QR code as a .png image file named after the student ID
     qr_filename = os.path.join(folder_path, f"{student_id}.png")
     qr.save(qr_filename, format="PNG")
 
-    # Convert QR code to binary data
+    # convert QR code to binary data and return
     qr_bytes = io.BytesIO()
     qr.save(qr_bytes, format="PNG")
-    return qr_bytes.getvalue()  # Return binary representation of QR code
+    return qr_bytes.getvalue()
 
 def generate_and_store_initial_qr_codes(cursor):
-    """Generates and stores QR codes for all students when initially creating the table."""
+    """generates and stores QR codes for all students when initially creating the SQL table."""
     cursor.execute("SELECT student_id, name, class FROM qr_data WHERE qr_code IS NULL")
     students = cursor.fetchall()
 
+    # loops through each student in the database, creates a QR code, and updates the table
     for student_id, name, class_name in students:
+        print(f"QR code created for: {name} ({student_id})")
         qr_code_binary = generate_qr_code(student_id, name, class_name)
         cursor.execute("UPDATE qr_data SET qr_code = ? WHERE student_id = ?", (qr_code_binary, student_id))
 
 
-def update_qr_code_for_student(cursor, student_id):
-    """Updates a student's QR code when scanned, creating a new one."""
+def update_qr_code(conn, cursor, student_id):
+    """updates a student's QR code when scanned, creating a new one."""
+    # queries the database for the student, using student's ID
     cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
     student = cursor.fetchone()
 
+    # ensure student exists in database
     if student:
         name, class_name = student
+
+        # create QR code and update database
         qr_code_binary = generate_qr_code(student_id, name, class_name)
         cursor.execute("UPDATE qr_data SET qr_code = ? WHERE student_id = ?", (qr_code_binary, student_id))
         print(f"QR code updated for student {student_id}")
+        conn.commit()
     else:
         print(f"Student ID {student_id} not found.")
 
@@ -120,7 +128,7 @@ def main(webcam_index):
             print("Error: Could not read frame.")
             break
 
-        # Decode QR codes from the frame
+        # detects and decode QR codes from each individual frame and returns a list
         qr_codes = decode(frame)
         for qr_code in qr_codes:
             qr_data = qr_code.data.decode("utf-8")
@@ -135,13 +143,11 @@ def main(webcam_index):
                 if student:
                     name, class_name = student
 
-                    # Get current timestamp
+                    # Get current timestamp and update database
                     scan_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                    # Update last_scan_time in the database
                     cursor.execute("UPDATE qr_data SET last_scan_time = ? WHERE student_id = ?",
                                    (scan_time, student_id))
-                    conn.commit()  # Ensure the update is saved
+                    conn.commit()
 
                     print(f"Student ID: {student_id}, Name: {name}, Class: {class_name}, Last Scan: {scan_time}")
 
@@ -149,6 +155,10 @@ def main(webcam_index):
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
                                 (qr_code.rect.left, qr_code.rect.top - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                    # update QR code and break look
+                    update_qr_code(conn, cursor, student_id)
+
 
                 else:
                     print("Student not found in database.")
