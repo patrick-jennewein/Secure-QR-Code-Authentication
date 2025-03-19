@@ -9,6 +9,36 @@ import time
 from colorama import init, Fore
 import warnings
 import sys
+import smtplib
+import mimetypes
+from email.message import EmailMessage
+from secure import sender_email, SENDER_PASSWORD, recipient_email
+
+
+def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path):
+    """Sends an email with the QR code attached to a fixed email address."""
+
+    # Create the email
+    msg = EmailMessage()
+    msg["Subject"] = f"New QR Code for {student_name} ({student_id})"
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
+    msg.set_content(f"Hello,\n\nA new QR code has been generated for {student_name} ({student_id}). Please find it attached.\n\nBest,\nQR Authentication System")
+
+    # Attach the QR code image
+    with open(qr_code_path, "rb") as f:
+        file_data = f.read()
+        file_type = mimetypes.guess_type(qr_code_path)[0] or "application/octet-stream"
+        msg.add_attachment(file_data, maintype=file_type.split('/')[0], subtype=file_type.split('/')[1], filename=f"QR_{student_id}.png")
+
+    # Send the email
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, SENDER_PASSWORD)
+            server.send_message(msg)
+        print(Fore.CYAN + f"{'Emailed':<10}{student_id:<8}{student_name:<30}{class_name:<10}{new_timestamp:<40}" + Fore.RESET)
+    except Exception as e:
+        print(Fore.RED + f"Error sending email: {e}" + Fore.RESET)
 
 
 def suppress_stderr():
@@ -92,6 +122,8 @@ def update_qr_code(conn, cursor, student_id):
         conn.commit()
         print(f"{'Updated':<10}{student_id:<8}{name:<30}{class_name:<10}{new_timestamp:<40}")
 
+        qr_code_path = os.path.join("qr_codes", f"{student_id}.png")  # Path to the saved QR code
+        send_email(student_id, name, class_name, new_timestamp, qr_code_path)
     else:
         print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
 
