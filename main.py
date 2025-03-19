@@ -6,6 +6,7 @@ import os
 from pyzbar.pyzbar import decode
 import datetime
 import time
+from colorama import init, Fore
 
 
 def set_webcam_index(index):
@@ -18,23 +19,23 @@ def set_webcam_index(index):
         return EXTERNAL_WEB_CAM
 
 
+def generate_qr_code(student_id, name, class_name, folder_path, initial):
+    """generates a unique QR code"""
 
-def generate_qr_code(student_id, name, class_name):
-    """Generates a unique QR code for a student with a timestamp and returns it as binary data."""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Store timestamp in QR data
+    # gather information about the QR code
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     qr_data = f"ID:{student_id}|Name:{name}|Class:{class_name}|TS:{timestamp}"
 
-    # Ensure the folder exists
-    folder_path = "qr_codes"
+    # ensure the folder where QR codes are stored actually exists
     if not os.path.exists(folder_path):
         try:
             os.makedirs(folder_path)
-            print(f"📂 Created folder: {folder_path}")
+            print(Fore.GREEN + f"Created folder: {folder_path}" + Fore.RESET)
         except OSError as e:
-            print(f"❌ Error creating folder {folder_path}: {e}")
-            return None, None  # Return None if the folder cannot be created
+            print(Fore.RED +f"Error creating folder {folder_path}: {e}" + Fore.RESET)
+            return None, None
 
-    # Save the new QR code image
+    # save the new QR code image
     qr = qrcode.make(qr_data)
     qr_filename = os.path.join(folder_path, f"{student_id}.png")
     qr.save(qr_filename, format="PNG")
@@ -43,52 +44,59 @@ def generate_qr_code(student_id, name, class_name):
     with open(qr_filename, "rb") as f:
         qr_binary = f.read()
 
-    print(f"✅ Generated new QR for {student_id} at {timestamp}")
+    if not initial:
+        print(Fore.GREEN + f"Generated new QR for {student_id} at {timestamp}" + Fore.RESET)
+
     return qr_binary, timestamp
 
 
 def update_qr_code(conn, cursor, student_id):
-    """Updates a student's QR code and invalidates old ones."""
+    """updates a QR code and invalidates previous QR codes."""
+    # query the database
     cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
     student = cursor.fetchone()
 
+    # if the student is found in the database
     if student:
         name, class_name = student
 
-        # Generate a new QR code and get a new timestamp
-        qr_code_binary, new_timestamp = generate_qr_code(student_id, name, class_name)
+        # generate a new QR code and get a new timestamp
+        qr_code_binary, new_timestamp = generate_qr_code(student_id, name, class_name, "qr_codes", False)
 
-        # Update the database with the new QR code and set valid timestamp
+        # update database with the new QR code and set valid timestamp
         cursor.execute("UPDATE qr_data SET qr_code = ?, qr_valid_after = ? WHERE student_id = ?",
                        (qr_code_binary, new_timestamp, student_id))
         conn.commit()
-        print(f"✅ QR code updated for student {student_id}. Old QR codes are now invalid.")
+        print(Fore.GREEN + f"QR code updated for student {student_id}. Old QR codes are now invalid." + Fore.RESET)
     else:
-        print(f"❌ Student ID {student_id} not found.")
+        print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
 
-def generate_and_store_initial_qr_codes(cursor):
-    """Generates and stores QR codes for all students when initially creating the SQL table."""
 
-    # Ensure the `qr_codes` folder exists
+def generate_and_store_initial_qr_codes(cursor, folder_path):
+    """generate and store QR codes for all students when initially creating the SQL table."""
+
+    # Ensure the folder exists
     folder_path = "qr_codes"
     if not os.path.exists(folder_path):
         try:
             os.makedirs(folder_path)
-            print(f"📂 Created folder: {folder_path}")
+            print(Fore.GREEN + f"Created folder: {folder_path}" + Fore.RESET)
         except OSError as e:
-            print(f"❌ Error creating folder {folder_path}: {e}")
+            print(Fore.RED +f"Error creating folder {folder_path}: {e}" + Fore.RESET)
             return
 
     cursor.execute("SELECT student_id, name, class FROM qr_data WHERE qr_code IS NULL")
     students = cursor.fetchall()
 
     for student_id, name, class_name in students:
-        qr_code_binary, timestamp = generate_qr_code(student_id, name, class_name)
+        qr_code_binary, timestamp = generate_qr_code(student_id, name, class_name, "qr_codes", True)
         if qr_code_binary:
             cursor.execute("UPDATE qr_data SET qr_code = ?, qr_valid_after = ? WHERE student_id = ?",
                            (qr_code_binary, timestamp, student_id))
 
+
 def create_columns_from_csv(cursor, csv_filename):
+    """generate data all students when initially creating the SQL table."""
     with open(csv_filename, "r", newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
 
@@ -101,15 +109,15 @@ def create_columns_from_csv(cursor, csv_filename):
                 "INSERT INTO qr_data (student_id, name, class) VALUES (?, ?, ?)",
                 (student_id, name, class_name),
             )
-    print("Initial database population complete!")
+    print(Fore.GREEN + f"Initial database population loaded from .csv and stored in SQL" + Fore.RESET)
 
 
 def initialize_database(conn, cursor):
-    # Check if table already exists
+    # check if table already exists
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='qr_data'")
     table_exists = cursor.fetchone()
 
-    # If table does not exist, create it
+    # if table does not exist, create it
     if not table_exists:
         cursor.execute('''
             CREATE TABLE qr_data (
@@ -118,11 +126,11 @@ def initialize_database(conn, cursor):
                 class TEXT,
                 qr_code TEXT UNIQUE,
                 last_scan_time TEXT DEFAULT NULL,
-                qr_valid_after TEXT  -- Column to track when a QR code becomes valid
+                qr_valid_after TEXT 
             )
         ''')
         create_columns_from_csv(cursor, "fake_data.csv")
-        print("✅ Table created!")
+        print(Fore.GREEN + f"SQL database fully initialized" + Fore.RESET)
 
     conn.commit()
 
@@ -150,7 +158,7 @@ def main(webcam_index):
             exit()
 
     # Generate initial QR codes if needed
-    generate_and_store_initial_qr_codes(cursor)
+    generate_and_store_initial_qr_codes(cursor, "qr_codes")
 
     # Dictionary to track recent scans and prevent duplicate processing
     recent_scans = {}
