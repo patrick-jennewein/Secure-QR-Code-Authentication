@@ -42,27 +42,25 @@ def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path
 
 
 def suppress_stderr():
-    """Temporarily redirect `stderr` to `os.devnull` to suppress warnings from ZBar."""
-    sys.stderr.flush()  # Ensure everything is written before redirecting
-    devnull = os.open(os.devnull, os.O_WRONLY)  # Open null device for writing
-    old_stderr = os.dup(2)  # Duplicate stderr file descriptor
-    os.dup2(devnull, 2)  # Redirect stderr to null
-    os.close(devnull)  # Close temporary null file descriptor
-    return old_stderr  # Return the old stderr to restore later
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    return old_stderr
 
 def restore_stderr(old_stderr):
-    """Restore original `stderr` after suppressing."""
     sys.stderr.flush()
-    os.dup2(old_stderr, 2)  # Restore original stderr
-    os.close(old_stderr)  # Close the old descriptor
+    os.dup2(old_stderr, 2)
+    os.close(old_stderr)
+
 
 def safe_decode(frame):
-    """Run `decode()` while completely suppressing stderr warnings from ZBar."""
-    old_stderr = suppress_stderr()  # Suppress stderr before calling decode
+    old_stderr = suppress_stderr()
     try:
-        qr_codes = decode(frame)  # Decode normally
+        qr_codes = decode(frame)
     finally:
-        restore_stderr(old_stderr)  # Restore stderr after decoding
+        restore_stderr(old_stderr)
     return qr_codes
 
 def set_webcam_index(index):
