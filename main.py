@@ -9,30 +9,58 @@ import time
 from colorama import init, Fore
 import warnings
 import sys
+import smtplib
+import mimetypes
+from email.message import EmailMessage
+from secure import sender_email, SENDER_PASSWORD, recipient_email
+
+
+def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path):
+    """Sends an email with the QR code attached to a fixed email address."""
+
+    # Create the email
+    msg = EmailMessage()
+    msg["Subject"] = f"New QR Code for {student_name} ({student_id})"
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
+    msg.set_content(f"Hello,\n\nA new QR code has been generated for {student_name} ({student_id}). Please find it attached.\n\nBest,\nQR Authentication System")
+
+    # Attach the QR code image
+    with open(qr_code_path, "rb") as f:
+        file_data = f.read()
+        file_type = mimetypes.guess_type(qr_code_path)[0] or "application/octet-stream"
+        msg.add_attachment(file_data, maintype=file_type.split('/')[0], subtype=file_type.split('/')[1], filename=f"QR_{student_id}.png")
+
+    # Send the email
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, SENDER_PASSWORD)
+            server.send_message(msg)
+        print(Fore.CYAN + f"{'Emailed':<10}{student_id:<8}{student_name:<30}{class_name:<10}{new_timestamp:<40}" + Fore.RESET)
+    except Exception as e:
+        print(Fore.RED + f"Error sending email: {e}" + Fore.RESET)
 
 
 def suppress_stderr():
-    """Temporarily redirect `stderr` to `os.devnull` to suppress warnings from ZBar."""
-    sys.stderr.flush()  # Ensure everything is written before redirecting
-    devnull = os.open(os.devnull, os.O_WRONLY)  # Open null device for writing
-    old_stderr = os.dup(2)  # Duplicate stderr file descriptor
-    os.dup2(devnull, 2)  # Redirect stderr to null
-    os.close(devnull)  # Close temporary null file descriptor
-    return old_stderr  # Return the old stderr to restore later
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    return old_stderr
 
 def restore_stderr(old_stderr):
-    """Restore original `stderr` after suppressing."""
     sys.stderr.flush()
-    os.dup2(old_stderr, 2)  # Restore original stderr
-    os.close(old_stderr)  # Close the old descriptor
+    os.dup2(old_stderr, 2)
+    os.close(old_stderr)
+
 
 def safe_decode(frame):
-    """Run `decode()` while completely suppressing stderr warnings from ZBar."""
-    old_stderr = suppress_stderr()  # Suppress stderr before calling decode
+    old_stderr = suppress_stderr()
     try:
-        qr_codes = decode(frame)  # Decode normally
+        qr_codes = decode(frame)
     finally:
-        restore_stderr(old_stderr)  # Restore stderr after decoding
+        restore_stderr(old_stderr)
     return qr_codes
 
 def set_webcam_index(index):
@@ -92,6 +120,8 @@ def update_qr_code(conn, cursor, student_id):
         conn.commit()
         print(f"{'Updated':<10}{student_id:<8}{name:<30}{class_name:<10}{new_timestamp:<40}")
 
+        qr_code_path = os.path.join("qr_codes", f"{student_id}.png")  # Path to the saved QR code
+        send_email(student_id, name, class_name, new_timestamp, qr_code_path)
     else:
         print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
 
@@ -287,7 +317,7 @@ def main(webcam_index, folder_path, database_name):
 
 
 if __name__ == '__main__':
-    webcam_index = set_webcam_index(1)
+    webcam_index = set_webcam_index(0)
     qr_code_folder = "qr_codes"
     database_name = "students.db"
     main(webcam_index, qr_code_folder, database_name)
