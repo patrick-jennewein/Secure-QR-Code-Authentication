@@ -317,7 +317,7 @@ def main(webcam_index, folder_path, database_name):
 
 
 if __name__ == '__main__':
-    webcam_index = set_webcam_index(1)
+    webcam_index = set_webcam_index(0)
     qr_code_folder = "qr_codes"
     database_name = "students.db"
     main(webcam_index, qr_code_folder, database_name)
