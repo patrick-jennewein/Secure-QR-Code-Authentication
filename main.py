@@ -13,6 +13,28 @@ import smtplib
 import mimetypes
 from email.message import EmailMessage
 from secure import sender_email, SENDER_PASSWORD, recipient_email
+import json
+import numpy as np
+
+from tensorflow.keras.models import load_model
+model = load_model("hand_gender_model.h5")
+
+# create directory and copy file
+kaggle_json_path = "kaggle.json"
+os.makedirs(os.path.expanduser("~/.kaggle"), exist_ok=True)
+with open(kaggle_json_path, "r") as f:
+    token = json.load(f)
+with open(os.path.expanduser("~/.kaggle/kaggle.json"), "w") as f:
+    json.dump(token, f)
+
+# set permissions
+os.chmod(os.path.expanduser("~/.kaggle/kaggle.json"), 0o600)
+
+# download
+import kagglehub
+path = kagglehub.dataset_download("shyambhu/hands-and-palm-images-dataset")
+print("Path to dataset files:", path)
+
 
 
 def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path):
@@ -294,12 +316,36 @@ def main(webcam_index, folder_path, database_name):
                                 (qr_code.rect.left, qr_code.rect.top - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+                    # --- Gender Prediction for Hand Holding Phone ---
+                    x, y, w, h = qr_code.rect.left, qr_code.rect.top, qr_code.rect.width, qr_code.rect.height
+                    pad = 50
+                    x = max(x - pad, 0)
+                    y = max(y - pad, 0)
+                    w = w + pad * 2
+                    h = h + pad * 2
+                    hand_crop = frame[y:y+h, x:x+w]
+
+                    try:
+                        hand_input = cv2.resize(hand_crop, (224, 224)) / 255.0
+                        hand_input = np.expand_dims(hand_input, axis=0)
+
+                        prediction = model.predict(hand_input)[0]
+                        gender = "Female" if prediction[1] > prediction[0] else "Male"
+
+                        print(Fore.MAGENTA + f"Hand holding phone is predicted to be: {gender}" + Fore.RESET)
+                        cv2.putText(frame, f"Hand: {gender}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+
+                    except Exception as e:
+                        print(Fore.YELLOW + f"Could not classify hand: {e}" + Fore.RESET)
+
+
                     # update QR code
                     update_qr_code(conn, cursor, student_id)
 
                     # Wait a short time to ensure the new QR code is in effect
                     # print(f"Waiting {cooldown_period} seconds to ensure the new QR code is in effect...")
                     time.sleep(cooldown_period)
+
 
                 else:
                     print(Fore.RED + "Student not found in database." + Fore.RESET)
