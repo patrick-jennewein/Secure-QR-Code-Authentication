@@ -12,7 +12,6 @@ from config import qr_code_folder, database_name, cooldown_period
 from webcam import set_webcam_index
 
 def main(webcam_index, folder_path, database_name):
-    print(f"{'Status':<10}{'ID':<8}{'Name':<30}{'Class':<10}{'Timestamp':<40}")
     # open connection to webcam
     webcam = cv2.VideoCapture(webcam_index)
     if not webcam.isOpened():
@@ -40,6 +39,7 @@ def main(webcam_index, folder_path, database_name):
     recent_scans = {}
 
     # capture webcam frames
+    print(f"{'Status':<10}{'ID':<8}{'Name':<30}{'Class':<10}{'Timestamp':<40}")
     while True:
         read, frame = webcam.read()
         if not read:
@@ -50,6 +50,7 @@ def main(webcam_index, folder_path, database_name):
         qr_codes = safe_decode(frame)
         for qr_code in qr_codes:
             qr_data = qr_code.data.decode("utf-8")
+            print(qr_data)
 
             if qr_data.startswith("ID:"):
                 qr_data_dict = {}
