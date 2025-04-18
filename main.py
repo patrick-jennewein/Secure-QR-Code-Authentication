@@ -1,142 +1,14 @@
 import cv2
-import csv
 import sqlite3
-import qrcode
-import os
-from pyzbar.pyzbar import decode
 import datetime
 import time
-from colorama import init, Fore
-import warnings
-import sys
-import smtplib
-import mimetypes
-from email.message import EmailMessage
-from secure import sender_email, SENDER_PASSWORD, recipient_email
-import numpy as np
-from playsound import playsound
-import subprocess
+from colorama import Fore
 import os
-
-
-def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path, image_path=None):
-    """Sends an email with the QR code and optionally the scanned image."""
-
-    msg = EmailMessage()
-    msg["Subject"] = f"New QR Code for {student_name} ({student_id})"
-    msg["From"] = sender_email
-    msg["To"] = recipient_email
-    msg.set_content(
-        f"Hello,\n\nA new QR code has been generated for {student_name} ({student_id}). "
-        f"Attached are the QR code and the image captured at the time of scan.\n\nBest,\nQR Authentication System"
-    )
-
-    # Attach QR code
-    with open(qr_code_path, "rb") as f:
-        file_data = f.read()
-        file_type = mimetypes.guess_type(qr_code_path)[0] or "application/octet-stream"
-        msg.add_attachment(file_data, maintype=file_type.split('/')[0],
-                           subtype=file_type.split('/')[1], filename=f"QR_{student_id}.png")
-
-    # Attach scanned image if available
-    if image_path and os.path.exists(image_path):
-        with open(image_path, "rb") as f:
-            image_data = f.read()
-            image_type = mimetypes.guess_type(image_path)[0] or "application/octet-stream"
-            msg.add_attachment(image_data, maintype=image_type.split('/')[0],
-                               subtype=image_type.split('/')[1], filename=os.path.basename(image_path))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender_email, SENDER_PASSWORD)
-            server.send_message(msg)
-        print(Fore.CYAN + f"{'Emailed':<10}{student_id:<8}{student_name:<30}{class_name:<10}{new_timestamp:<40}" + Fore.RESET)
-    except Exception as e:
-        print(Fore.RED + f"Error sending email: {e}" + Fore.RESET)
-
-
-
-
-def play_sound(success=True):
-    """Play a .mp3 sound file for success or failure using macOS-safe afplay."""
-    sound_file = "./success.mp3" if success else "fail.mp3"
-    sound_path = os.path.join(os.path.dirname(__file__), sound_file)
-
-    if os.path.exists(sound_path):
-        try:
-            subprocess.run(["afplay", sound_path])
-        except Exception as e:
-            print(Fore.YELLOW + f"Could not play sound: {e}" + Fore.RESET)
-    else:
-        print(Fore.YELLOW + f"Sound file not found: {sound_path}" + Fore.RESET)
-
-
-def save_scan_image(frame, student_id):
-    """Save an image of the scanned frame with timestamp and ID, and return path."""
-    timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    filename = f"{student_id}_{timestamp}.jpg"
-    filepath = os.path.join("scanned_images", filename)
-
-    os.makedirs("scanned_images", exist_ok=True)
-    cv2.imwrite(filepath, frame)
-
-    return filepath
-
-
-
-
-def suppress_stderr():
-    sys.stderr.flush()
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    old_stderr = os.dup(2)
-    os.dup2(devnull, 2)
-    os.close(devnull)
-    return old_stderr
-
-def restore_stderr(old_stderr):
-    sys.stderr.flush()
-    os.dup2(old_stderr, 2)
-    os.close(old_stderr)
-
-
-def safe_decode(frame):
-    old_stderr = suppress_stderr()
-    try:
-        # First attempt: decode raw frame
-        qr_codes = decode(frame)
-        if qr_codes:
-            return qr_codes
-
-        # --- Enhanced pipeline ---
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # CLAHE to boost contrast
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-
-        # Gradient magnitude (glare tends to show up as sharp changes)
-        sobelx = cv2.Sobel(enhanced, cv2.CV_64F, 1, 0, ksize=5)
-        sobely = cv2.Sobel(enhanced, cv2.CV_64F, 0, 1, ksize=5)
-        gradient_mag = np.sqrt(sobelx**2 + sobely**2)
-        gradient_mag = np.uint8(np.clip(gradient_mag, 0, 255))
-
-        # Suppress reflections by subtracting gradients
-        reflection_reduced = cv2.subtract(enhanced, gradient_mag)
-
-        # Sharpen the result
-        sharpen_kernel = np.array([[0, -1, 0],
-                                   [-1, 5, -1],
-                                   [0, -1, 0]])
-        sharpened = cv2.filter2D(reflection_reduced, -1, sharpen_kernel)
-
-        # Decode
-        processed = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
-        qr_codes = decode(processed)
-
-    finally:
-        restore_stderr(old_stderr)
-    return qr_codes
-
+from sound_utils import play_sound
+from image_utils import save_scan_image, safe_decode
+from qr_utils import update_qr_code
+from db_utils import initialize_database, generate_and_store_initial_qr_codes
+from config import qr_code_folder, database_name, cooldown_period
 
 
 def set_webcam_index(index):
@@ -147,122 +19,6 @@ def set_webcam_index(index):
         return DEFAULT_WEB_CAM
     elif index == 1:
         return EXTERNAL_WEB_CAM
-
-
-def generate_qr_code(student_id, name, class_name, folder_path, initial):
-    """generates a unique QR code"""
-
-    # gather information about the QR code
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    qr_data = f"ID:{student_id}|Name:{name}|Class:{class_name}|TS:{timestamp}"
-
-    # ensure the folder where QR codes are stored actually exists
-    if not os.path.exists(folder_path):
-        try:
-            os.makedirs(folder_path)
-            print(Fore.GREEN + f"Created folder: {folder_path}" + Fore.RESET)
-        except OSError as e:
-            print(Fore.RED +f"Error creating folder {folder_path}: {e}" + Fore.RESET)
-            return None, None
-
-    # save the new QR code image
-    qr = qrcode.make(qr_data)
-    qr_filename = os.path.join(folder_path, f"{student_id}.png")
-    qr.save(qr_filename, format="PNG")
-
-    # Convert QR code to binary and return
-    with open(qr_filename, "rb") as f:
-        qr_binary = f.read()
-
-    return qr_binary, timestamp
-
-
-def update_qr_code(conn, cursor, student_id, image_path=None):
-    """updates a QR code and invalidates previous QR codes."""
-    # query the database
-    cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
-    student = cursor.fetchone()
-
-    # if the student is found in the database
-    if student:
-        name, class_name = student
-
-        # generate a new QR code and get a new timestamp
-        qr_code_binary, new_timestamp = generate_qr_code(student_id, name, class_name, "qr_codes", False)
-
-        # update database with the new QR code and set valid timestamp
-        cursor.execute("UPDATE qr_data SET qr_code = ?, qr_valid_after = ? WHERE student_id = ?",
-                       (qr_code_binary, new_timestamp, student_id))
-        conn.commit()
-        print(f"{'Updated':<10}{student_id:<8}{name:<30}{class_name:<10}{new_timestamp:<40}")
-
-        qr_code_path = os.path.join("qr_codes", f"{student_id}.png")  # Path to the saved QR code
-        send_email(student_id, name, class_name, new_timestamp, qr_code_path, image_path=image_path)
-    else:
-        print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
-
-
-def generate_and_store_initial_qr_codes(cursor, folder_path):
-    """generate and store QR codes for all students when initially creating the SQL table."""
-
-    # Ensure the folder exists
-    folder_path = "qr_codes"
-    if not os.path.exists(folder_path):
-        try:
-            os.makedirs(folder_path)
-            print(Fore.GREEN + f"Created folder: {folder_path}" + Fore.RESET)
-        except OSError as e:
-            print(Fore.RED +f"Error creating folder {folder_path}: {e}" + Fore.RESET)
-            return
-
-    cursor.execute("SELECT student_id, name, class FROM qr_data WHERE qr_code IS NULL")
-    students = cursor.fetchall()
-
-    for student_id, name, class_name in students:
-        qr_code_binary, timestamp = generate_qr_code(student_id, name, class_name, "qr_codes", True)
-        if qr_code_binary:
-            cursor.execute("UPDATE qr_data SET qr_code = ?, qr_valid_after = ? WHERE student_id = ?",
-                           (qr_code_binary, timestamp, student_id))
-
-
-def create_columns_from_csv(cursor, csv_filename):
-    """generate data all students when initially creating the SQL table."""
-    with open(csv_filename, "r", newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile)
-
-        for row in reader:
-            student_id = row["student_id"].strip()
-            name = row["name"].strip()
-            class_name = row["class"].strip()
-
-            cursor.execute(
-                "INSERT INTO qr_data (student_id, name, class) VALUES (?, ?, ?)",
-                (student_id, name, class_name),
-            )
-    print(Fore.GREEN + f"Initial database population loaded from .csv and stored in SQL" + Fore.RESET)
-
-
-def initialize_database(conn, cursor):
-    # check if table already exists
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='qr_data'")
-    table_exists = cursor.fetchone()
-
-    # if table does not exist, create it
-    if not table_exists:
-        cursor.execute('''
-            CREATE TABLE qr_data (
-                student_id TEXT PRIMARY KEY,
-                name TEXT,
-                class TEXT,
-                qr_code TEXT UNIQUE,
-                last_scan_time TEXT DEFAULT NULL,
-                qr_valid_after TEXT 
-            )
-        ''')
-        create_columns_from_csv(cursor, "fake_data.csv")
-        print(Fore.GREEN + f"SQL database fully initialized" + Fore.RESET)
-
-    conn.commit()
 
 
 def main(webcam_index, folder_path, database_name):
@@ -326,7 +82,6 @@ def main(webcam_index, folder_path, database_name):
 
                 # get current time
                 current_time = time.time()
-                cooldown_period = 1.5
 
                 # check if this student ID was scanned recently
                 if student_id in recent_scans:
@@ -400,6 +155,4 @@ def main(webcam_index, folder_path, database_name):
 
 if __name__ == '__main__':
     webcam_index = set_webcam_index(0)
-    qr_code_folder = "qr_codes"
-    database_name = "students.db"
     main(webcam_index, qr_code_folder, database_name)
