@@ -14,6 +14,9 @@ import mimetypes
 from email.message import EmailMessage
 from secure import sender_email, SENDER_PASSWORD, recipient_email
 import numpy as np
+from playsound import playsound
+import subprocess
+import os
 
 
 def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path):
@@ -40,6 +43,35 @@ def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path
         print(Fore.CYAN + f"{'Emailed':<10}{student_id:<8}{student_name:<30}{class_name:<10}{new_timestamp:<40}" + Fore.RESET)
     except Exception as e:
         print(Fore.RED + f"Error sending email: {e}" + Fore.RESET)
+
+
+
+def play_sound(success=True):
+    """Play a .mp3 sound file for success or failure using macOS-safe afplay."""
+    sound_file = "./success.mp3" if success else "fail.mp3"
+    sound_path = os.path.join(os.path.dirname(__file__), sound_file)
+
+    if os.path.exists(sound_path):
+        try:
+            subprocess.run(["afplay", sound_path, "-t", "0.5"])
+        except Exception as e:
+            print(Fore.YELLOW + f"Could not play sound: {e}" + Fore.RESET)
+    else:
+        print(Fore.YELLOW + f"Sound file not found: {sound_path}" + Fore.RESET)
+
+
+def save_scan_image(frame, student_id):
+    """Save an image of the scanned frame with timestamp and ID."""
+    timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    filename = f"{student_id}_{timestamp}.jpg"
+    filepath = os.path.join("scanned_images", filename)
+
+    # Ensure the directory exists
+    os.makedirs("scanned_images", exist_ok=True)
+
+    # Save the image
+    cv2.imwrite(filepath, frame)
+
 
 
 def suppress_stderr():
@@ -93,8 +125,6 @@ def safe_decode(frame):
     finally:
         restore_stderr(old_stderr)
     return qr_codes
-
-
 
 
 
@@ -277,6 +307,7 @@ def main(webcam_index, folder_path, database_name):
                 # ensure required fields exist
                 if "ID" not in qr_data_dict or "TS" not in qr_data_dict:
                     print(Fore.RED + f"Invalid QR code format. Skipping..." + Fore.RESET)
+                    play_sound(success=False)
                     continue
 
                 student_id = qr_data_dict["ID"]
@@ -313,6 +344,7 @@ def main(webcam_index, folder_path, database_name):
                     # reject outdated QR codes
                     if scanned_time_obj < valid_after_obj:
                         outdated_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        play_sound(success=False)
                         print(Fore.RED + f"{'Outdated':<10}{student_id:<8}{name:<30}{class_name:<10}{outdated_time:<40}" + Fore.RESET)
                         continue
 
@@ -323,6 +355,8 @@ def main(webcam_index, folder_path, database_name):
                     conn.commit()
 
                     print(Fore.GREEN + f"{'Success':<10}{student_id:<8}{name:<30}{class_name:<10}{scan_time:<40}" + Fore.RESET)
+                    play_sound(success=True)
+                    save_scan_image(frame, student_id)
 
                     # display detected student info on the frame
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
@@ -338,6 +372,7 @@ def main(webcam_index, folder_path, database_name):
 
                 else:
                     print(Fore.RED + "Student not found in database." + Fore.RESET)
+                    play_sound(success=False)
 
         # Show webcam feed with potential QR code overlays
         cv2.imshow("Webcam Feed", frame)
