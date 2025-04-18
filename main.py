@@ -19,23 +19,33 @@ import subprocess
 import os
 
 
-def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path):
-    """Sends an email with the QR code attached to a fixed email address."""
+def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path, image_path=None):
+    """Sends an email with the QR code and optionally the scanned image."""
 
-    # Create the email
     msg = EmailMessage()
     msg["Subject"] = f"New QR Code for {student_name} ({student_id})"
     msg["From"] = sender_email
     msg["To"] = recipient_email
-    msg.set_content(f"Hello,\n\nA new QR code has been generated for {student_name} ({student_id}). Please find it attached.\n\nBest,\nQR Authentication System")
+    msg.set_content(
+        f"Hello,\n\nA new QR code has been generated for {student_name} ({student_id}). "
+        f"Attached are the QR code and the image captured at the time of scan.\n\nBest,\nQR Authentication System"
+    )
 
-    # Attach the QR code image
+    # Attach QR code
     with open(qr_code_path, "rb") as f:
         file_data = f.read()
         file_type = mimetypes.guess_type(qr_code_path)[0] or "application/octet-stream"
-        msg.add_attachment(file_data, maintype=file_type.split('/')[0], subtype=file_type.split('/')[1], filename=f"QR_{student_id}.png")
+        msg.add_attachment(file_data, maintype=file_type.split('/')[0],
+                           subtype=file_type.split('/')[1], filename=f"QR_{student_id}.png")
 
-    # Send the email
+    # Attach scanned image if available
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+            image_type = mimetypes.guess_type(image_path)[0] or "application/octet-stream"
+            msg.add_attachment(image_data, maintype=image_type.split('/')[0],
+                               subtype=image_type.split('/')[1], filename=os.path.basename(image_path))
+
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender_email, SENDER_PASSWORD)
@@ -46,6 +56,7 @@ def send_email(student_id, student_name, class_name, new_timestamp, qr_code_path
 
 
 
+
 def play_sound(success=True):
     """Play a .mp3 sound file for success or failure using macOS-safe afplay."""
     sound_file = "./success.mp3" if success else "fail.mp3"
@@ -53,7 +64,7 @@ def play_sound(success=True):
 
     if os.path.exists(sound_path):
         try:
-            subprocess.run(["afplay", sound_path, "-t", "0.5"])
+            subprocess.run(["afplay", sound_path])
         except Exception as e:
             print(Fore.YELLOW + f"Could not play sound: {e}" + Fore.RESET)
     else:
@@ -61,16 +72,16 @@ def play_sound(success=True):
 
 
 def save_scan_image(frame, student_id):
-    """Save an image of the scanned frame with timestamp and ID."""
+    """Save an image of the scanned frame with timestamp and ID, and return path."""
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     filename = f"{student_id}_{timestamp}.jpg"
     filepath = os.path.join("scanned_images", filename)
 
-    # Ensure the directory exists
     os.makedirs("scanned_images", exist_ok=True)
-
-    # Save the image
     cv2.imwrite(filepath, frame)
+
+    return filepath
+
 
 
 
@@ -166,7 +177,7 @@ def generate_qr_code(student_id, name, class_name, folder_path, initial):
     return qr_binary, timestamp
 
 
-def update_qr_code(conn, cursor, student_id):
+def update_qr_code(conn, cursor, student_id, image_path=None):
     """updates a QR code and invalidates previous QR codes."""
     # query the database
     cursor.execute("SELECT name, class FROM qr_data WHERE student_id = ?", (student_id,))
@@ -186,7 +197,7 @@ def update_qr_code(conn, cursor, student_id):
         print(f"{'Updated':<10}{student_id:<8}{name:<30}{class_name:<10}{new_timestamp:<40}")
 
         qr_code_path = os.path.join("qr_codes", f"{student_id}.png")  # Path to the saved QR code
-        send_email(student_id, name, class_name, new_timestamp, qr_code_path)
+        send_email(student_id, name, class_name, new_timestamp, qr_code_path, image_path=image_path)
     else:
         print(Fore.RED + f"ERROR: Student ID {student_id} not found." + Fore.RESET)
 
@@ -356,7 +367,7 @@ def main(webcam_index, folder_path, database_name):
 
                     print(Fore.GREEN + f"{'Success':<10}{student_id:<8}{name:<30}{class_name:<10}{scan_time:<40}" + Fore.RESET)
                     play_sound(success=True)
-                    save_scan_image(frame, student_id)
+                    image_path = save_scan_image(frame, student_id)
 
                     # display detected student info on the frame
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
@@ -364,7 +375,8 @@ def main(webcam_index, folder_path, database_name):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
                     # update QR code
-                    update_qr_code(conn, cursor, student_id)
+                    update_qr_code(conn, cursor, student_id, image_path=image_path)
+
 
                     # Wait a short time to ensure the new QR code is in effect
                     # print(f"Waiting {cooldown_period} seconds to ensure the new QR code is in effect...")
