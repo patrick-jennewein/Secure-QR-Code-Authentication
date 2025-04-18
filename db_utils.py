@@ -66,3 +66,11 @@ def initialize_database(conn, cursor):
 
     conn.commit()
 
+def log_scan_event(status, student_id, student_name, class_name, timestamp, filename="scan_log.csv"):
+    """Appends scan event info to a CSV log file."""
+    file_exists = os.path.exists(filename)
+    with open(filename, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Status", "Student ID", "Name", "Class", "Timestamp"])
+        writer.writerow([status, student_id, student_name, class_name, timestamp])

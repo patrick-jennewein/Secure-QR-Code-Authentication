@@ -7,19 +7,9 @@ import os
 from sound_utils import play_sound
 from image_utils import save_scan_image, safe_decode
 from qr_utils import update_qr_code
-from db_utils import initialize_database, generate_and_store_initial_qr_codes
+from db_utils import initialize_database, generate_and_store_initial_qr_codes, log_scan_event
 from config import qr_code_folder, database_name, cooldown_period
-
-
-def set_webcam_index(index):
-    """Sets the index of the webcam that will be used for this application"""
-    DEFAULT_WEB_CAM = 0
-    EXTERNAL_WEB_CAM = 1
-    if index == 0:
-        return DEFAULT_WEB_CAM
-    elif index == 1:
-        return EXTERNAL_WEB_CAM
-
+from webcam import set_webcam_index
 
 def main(webcam_index, folder_path, database_name):
     print(f"{'Status':<10}{'ID':<8}{'Name':<30}{'Class':<10}{'Timestamp':<40}")
@@ -112,6 +102,7 @@ def main(webcam_index, folder_path, database_name):
                         outdated_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         play_sound(success=False)
                         print(Fore.RED + f"{'Outdated':<10}{student_id:<8}{name:<30}{class_name:<10}{outdated_time:<40}" + Fore.RESET)
+                        log_scan_event("Outdated", student_id, name, class_name, scan_time)
                         continue
 
                     # get formatted timestamp for valid scan and update database
@@ -123,6 +114,7 @@ def main(webcam_index, folder_path, database_name):
                     print(Fore.GREEN + f"{'Success':<10}{student_id:<8}{name:<30}{class_name:<10}{scan_time:<40}" + Fore.RESET)
                     play_sound(success=True)
                     image_path = save_scan_image(frame, student_id)
+                    log_scan_event("Success", student_id, name, class_name, scan_time)
 
                     # display detected student info on the frame
                     cv2.putText(frame, f"ID: {student_id}, Name: {name}, Class: {class_name}, Time: {scan_time}",
@@ -139,6 +131,7 @@ def main(webcam_index, folder_path, database_name):
 
                 else:
                     print(Fore.RED + "Student not found in database." + Fore.RESET)
+                    log_scan_event("Not found", student_id, name, class_name, scan_time)
                     play_sound(success=False)
 
         # Show webcam feed with potential QR code overlays
