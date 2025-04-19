@@ -33,20 +33,26 @@ def safe_decode(frame):
         if qr_codes:
             return qr_codes
 
-        # --- Enhanced pipeline ---
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
 
         # CLAHE to boost contrast
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
+        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
-        # Gradient magnitude (glare tends to show up as sharp changes)
-        sobelx = cv2.Sobel(enhanced, cv2.CV_64F, 1, 0, ksize=5)
-        sobely = cv2.Sobel(enhanced, cv2.CV_64F, 0, 1, ksize=5)
-        gradient_mag = np.sqrt(sobelx**2 + sobely**2)
-        gradient_mag = np.uint8(np.clip(gradient_mag, 0, 255))
+        # Gradient magnitude for glare
+        sobelx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+        abs_sobelx = cv2.convertScaleAbs(sobelx)
+        abs_sobely = cv2.convertScaleAbs(sobely)
+
+        # Combine with weighted sum
+        gradient_mag = cv2.addWeighted(abs_sobelx, 0.5, abs_sobely, 0.5, 0)
+
+        # clean up small edges (threshold weak gradients)
+        _, gradient_mag = cv2.threshold(gradient_mag, 50, 255, cv2.THRESH_TOZERO)
 
         # Suppress reflections by subtracting gradients
         reflection_reduced = cv2.subtract(enhanced, gradient_mag)
